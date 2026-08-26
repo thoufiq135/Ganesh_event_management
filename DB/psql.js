@@ -5,7 +5,7 @@ const pool = new Pool({
     port: 5432,
     user: "admin",
     password: "admin",
-    database: "stackenzo_attendance",
+    database: "ganesh_events",
 });
 
 async function connectDB() {
