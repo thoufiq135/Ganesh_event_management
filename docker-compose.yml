@@ -4,4 +4,4 @@ services:
   container_name: ganesh_backend
   restart: always
   ports: 
-   - "3000:3000"
+   - "5002:3000"
