@@ -1,0 +1,7 @@
+services:
+ backend:
+  build: .
+  container_name: ganesh_backend
+  restart: always
+  ports: 
+   - "3000:3000"
