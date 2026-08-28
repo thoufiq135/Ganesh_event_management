@@ -1,7 +1,7 @@
 const express=require("express")
 const app=express()
 const cors=require("cors")
-const {minioClient,connectMinio}=require("./DB/minio")
+const {minioClient,connectMinio,uploadToMinio}=require("./DB/minio")
 const {connectDB,pool}=require("./DB/psql")
 const {redis,connectRedis}=require("./DB/redis")
 const auth=require("./api/authenticate")

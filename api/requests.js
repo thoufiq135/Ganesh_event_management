@@ -1,14 +1,26 @@
 const express=require("express")
 const router=express.Router()
-const {minioClient,connectMinio}=require("../DB/minio")
+
 const {connectDB,pool}=require("../DB/psql")
 const multer=require("multer")
+const {
+    minioClient,
+    connectMinio,
+    uploadToMinio,
+    getMinioUrl
+}=require("../DB/minio")
+
+const storage = multer.memoryStorage();
+
 const upload = multer({
-    storage: multer.memoryStorage()
+    storage: storage,
+
+    limits: {
+        fileSize: 10 * 1024 * 1024
+    }
 });
 router.post(
     "/addEvent",
- 
 
     upload.fields([
         {
@@ -19,381 +31,159 @@ router.post(
 
     async (req, res) => {
 
-        // --------------------------------------------------
-        // 1. Get logged-in employee from JWT
-        // --------------------------------------------------
-
-        const empid = req.user?.id;
-
-        if (!empid) {
-            return res.status(401).json({
-                message: "Authentication required"
-            });
-        }
-
-        // --------------------------------------------------
-        // 2. Get request body
-        // --------------------------------------------------
-
-        const {
-            committee_name,
-            committee_registration_number,
-            committee_address,
-            committee_village_town,
-            committee_mandal,
-
-            id_proof_type,
-            id_proof_number,
-
-            mandapam_name,
-            landmark,
-            mandapam_address,
-            mandapam_village_town,
-            mandapam_mandal,
-            district,
-
-            installation_date,
-            festival_start_date,
-            festival_end_date,
-
-            daily_start_time,
-            daily_end_time,
-
-            expected_visitors,
-            idol_height_ft,
-
-            sound_system_required,
-            electrical_connection_required,
-            generator_required,
-            procession_required,
-
-            place_of_mandapam,
-            special_event_details,
-
-            nimarjanam_date,
-            nimarjanam_location,
-
-            shobha_yatra_start_time,
-            shobha_yatra_end_time,
-
-            cultural_events_with_yatra,
-            specify_other_cultural_event,
-            additional_nimarjanam_details,
-
-            latitude,
-            longitude
-        } = req.body;
-
-        // --------------------------------------------------
-        // 3. Get location photo
-        // --------------------------------------------------
-
-        const locationPhoto =
-            req.files?.location_photo?.[0];
-
-        // --------------------------------------------------
-        // 4. Validate required text fields
-        // --------------------------------------------------
-
-        const requiredFields = {
-            committee_name,
-            committee_registration_number,
-            committee_address,
-            committee_village_town,
-            committee_mandal,
-
-            id_proof_type,
-            id_proof_number,
-
-            mandapam_name,
-            landmark,
-            mandapam_address,
-            mandapam_village_town,
-            mandapam_mandal,
-            district,
-
-            installation_date,
-            festival_start_date,
-            festival_end_date,
-
-            daily_start_time,
-            daily_end_time,
-
-            expected_visitors,
-            idol_height_ft,
-
-            place_of_mandapam,
-            special_event_details,
-
-            nimarjanam_date,
-            nimarjanam_location,
-
-            shobha_yatra_start_time,
-            shobha_yatra_end_time,
-
-            cultural_events_with_yatra,
-            specify_other_cultural_event,
-            additional_nimarjanam_details,
-
-            latitude,
-            longitude
-        };
-
-        for (
-            const [field, value]
-            of Object.entries(requiredFields)
-        ) {
-
-            if (
-                value === undefined ||
-                value === null ||
-                String(value).trim() === ""
-            ) {
-                return res.status(400).json({
-                    message:
-                        `${field} is required`
-                });
-            }
-        }
-
-        // --------------------------------------------------
-        // 5. Validate boolean fields
-        // --------------------------------------------------
-
-        const booleanFields = {
-            sound_system_required,
-            electrical_connection_required,
-            generator_required,
-            procession_required
-        };
-
-        for (
-            const [field, value]
-            of Object.entries(booleanFields)
-        ) {
-
-            if (
-                value === undefined ||
-                value === null ||
-                value === ""
-            ) {
-                return res.status(400).json({
-                    message:
-                        `${field} is required`
-                });
-            }
-
-            // Multipart form-data sends values as strings
-            if (
-                value !== true &&
-                value !== false &&
-                value !== "true" &&
-                value !== "false"
-            ) {
-                return res.status(400).json({
-                    message:
-                        `${field} must be true or false`
-                });
-            }
-        }
-
-        // --------------------------------------------------
-        // 6. Validate location photo
-        // --------------------------------------------------
-
-        if (!locationPhoto) {
-            return res.status(400).json({
-                message:
-                    "Location photo is required"
-            });
-        }
-
-        // --------------------------------------------------
-        // 7. Convert boolean values
-        // --------------------------------------------------
-
-        const soundSystemRequired =
-            sound_system_required === true ||
-            sound_system_required === "true";
-
-        const electricalConnectionRequired =
-            electrical_connection_required === true ||
-            electrical_connection_required === "true";
-
-        const generatorRequired =
-            generator_required === true ||
-            generator_required === "true";
-
-        const processionRequired =
-            procession_required === true ||
-            procession_required === "true";
-
-        // --------------------------------------------------
-        // 8. Validate GPS
-        // --------------------------------------------------
-
-        const latitudeValue =
-            Number(latitude);
-
-        const longitudeValue =
-            Number(longitude);
-
-        if (
-            !Number.isFinite(latitudeValue) ||
-            latitudeValue < -90 ||
-            latitudeValue > 90
-        ) {
-            return res.status(400).json({
-                message:
-                    "Invalid latitude"
-            });
-        }
-
-        if (
-            !Number.isFinite(longitudeValue) ||
-            longitudeValue < -180 ||
-            longitudeValue > 180
-        ) {
-            return res.status(400).json({
-                message:
-                    "Invalid longitude"
-            });
-        }
-
-        // --------------------------------------------------
-        // 9. Validate numeric fields
-        // --------------------------------------------------
-
-        const expectedVisitorsValue =
-            Number(expected_visitors);
-
-        const idolHeightValue =
-            Number(idol_height_ft);
-
-        if (
-            !Number.isInteger(
-                expectedVisitorsValue
-            ) ||
-            expectedVisitorsValue <= 0
-        ) {
-            return res.status(400).json({
-                message:
-                    "expected_visitors must be a positive integer"
-            });
-        }
-
-        if (
-            !Number.isFinite(
-                idolHeightValue
-            ) ||
-            idolHeightValue <= 0
-        ) {
-            return res.status(400).json({
-                message:
-                    "idol_height_ft must be a positive number"
-            });
-        }
-
-        // --------------------------------------------------
-        // 10. Parse cultural events JSON
-        // --------------------------------------------------
-
-        let culturalEvents;
+        const client = await pool.connect();
 
         try {
 
-            culturalEvents =
-                typeof cultural_events_with_yatra === "string"
-                    ? JSON.parse(
-                        cultural_events_with_yatra
-                    )
-                    : cultural_events_with_yatra;
+            const {
 
-        } catch (error) {
+                empid,
 
-            return res.status(400).json({
-                message:
-                    "cultural_events_with_yatra must be valid JSON"
-            });
-        }
+                committee_name,
+                committee_registration_number,
+                committee_address,
+                committee_village_town,
+                committee_mandal,
 
-        // --------------------------------------------------
-        // 11. Validate cultural events
-        // --------------------------------------------------
+                id_proof_type,
+                id_proof_number,
 
-        if (
-            !culturalEvents ||
-            typeof culturalEvents !== "object"
-        ) {
-            return res.status(400).json({
-                message:
-                    "Invalid cultural_events_with_yatra"
-            });
-        }
+                mandapam_name,
+                landmark,
+                mandapam_address,
+                mandapam_village_town,
+                mandapam_mandal,
+                district,
 
-        const culturalEventNames = [
-            "dj",
-            "band",
-            "drums",
-            "cultural_dance",
-            "bhajans",
-            "other"
-        ];
+                installation_date,
+                festival_start_date,
+                festival_end_date,
 
-        for (
-            const eventName
-            of culturalEventNames
-        ) {
+                daily_start_time,
+                daily_end_time,
+
+                expected_visitors,
+                idol_height_ft,
+
+                sound_system_required,
+                electrical_connection_required,
+                generator_required,
+                procession_required,
+
+                place_of_mandapam,
+                special_event_details,
+
+                nimarjanam_date,
+                nimarjanam_location,
+
+                shobha_yatra_start_time,
+                shobha_yatra_end_time,
+
+                cultural_events_with_yatra,
+                specify_other_cultural_event,
+                additional_nimarjanam_details,
+
+                latitude,
+                longitude
+
+            } = req.body;
+
+
+            // ==========================================
+            // 1. VALIDATE REQUIRED FIELDS
+            // ==========================================
 
             if (
-                typeof culturalEvents[eventName]
-                    !== "boolean"
+
+                !empid ||
+
+                !committee_name ||
+                !committee_registration_number ||
+                !committee_address ||
+                !committee_village_town ||
+                !committee_mandal ||
+
+                !id_proof_type ||
+                !id_proof_number ||
+
+                !mandapam_name ||
+                !landmark ||
+                !mandapam_address ||
+                !mandapam_village_town ||
+                !mandapam_mandal ||
+                !district ||
+
+                !installation_date ||
+                !festival_start_date ||
+                !festival_end_date ||
+
+                !daily_start_time ||
+                !daily_end_time ||
+
+                !expected_visitors ||
+                !idol_height_ft ||
+
+                sound_system_required === undefined ||
+                electrical_connection_required === undefined ||
+                generator_required === undefined ||
+                procession_required === undefined ||
+
+                !place_of_mandapam ||
+                !special_event_details ||
+
+                !nimarjanam_date ||
+                !nimarjanam_location ||
+
+                !shobha_yatra_start_time ||
+                !shobha_yatra_end_time ||
+
+                !cultural_events_with_yatra ||
+
+                !latitude ||
+                !longitude
+
             ) {
+
                 return res.status(400).json({
+
                     message:
-                        `cultural_events_with_yatra.${eventName} must be true or false`
+                        "All required event fields must be provided"
+
                 });
+
             }
-        }
 
-        // --------------------------------------------------
-        // 12. Validate place of mandapam
-        // --------------------------------------------------
 
-        const allowedPlaces = [
-            "On Road",
-            "Beside Road",
-            "Private Place",
-            "Govt. Place",
-            "Temple Place",
-            "Other"
-        ];
+            // ==========================================
+            // 2. CHECK LOCATION PHOTO
+            // ==========================================
 
-        if (
-            !allowedPlaces.includes(
-                place_of_mandapam.trim()
-            )
-        ) {
-            return res.status(400).json({
-                message:
-                    "Invalid place_of_mandapam"
-            });
-        }
+            const locationPhoto =
+                req.files?.location_photo?.[0];
 
-        // --------------------------------------------------
-        // 13. Database connection
-        // --------------------------------------------------
 
-        const client =
-            await pool.connect();
+            if (!locationPhoto) {
 
-        try {
+                return res.status(400).json({
+
+                    message:
+                        "Location photo is required"
+
+                });
+
+            }
+
+
+            // ==========================================
+            // 3. START TRANSACTION
+            // ==========================================
 
             await client.query("BEGIN");
 
-            // --------------------------------------------------
-            // 14. Get employee information
-            // --------------------------------------------------
+
+            // ==========================================
+            // 4. CHECK EMPLOYEE / REGISTERED USER
+            // ==========================================
 
             const employeeResult =
                 await client.query(
@@ -404,109 +194,157 @@ router.post(
                         email,
                         phonenumber,
                         address,
-                        status,
+
+                        aadhaar_image_path,
+                        voter_id_image_path,
+                        driving_license_image_path,
+
                         profile_verified,
                         profile_completed
+
                     FROM employees
+
                     WHERE id = $1
+
                     LIMIT 1
                     `,
                     [empid]
                 );
 
+
             if (
                 employeeResult.rows.length === 0
             ) {
 
-                await client.query(
-                    "ROLLBACK"
-                );
+                await client.query("ROLLBACK");
 
                 return res.status(404).json({
+
                     message:
-                        "Employee account not found"
+                        "Registered user not found"
+
                 });
+
             }
+
 
             const employee =
                 employeeResult.rows[0];
 
-            // --------------------------------------------------
-            // 15. Check employee status
-            // --------------------------------------------------
 
-            if (!employee.status) {
-
-                await client.query(
-                    "ROLLBACK"
-                );
-
-                return res.status(403).json({
-                    message:
-                        "Employee account is inactive"
-                });
-            }
-
-            // --------------------------------------------------
-            // 16. Check profile verification
-            // --------------------------------------------------
+            // ==========================================
+            // 5. CHECK PROFILE STATUS
+            // ==========================================
 
             if (!employee.profile_verified) {
 
-                await client.query(
-                    "ROLLBACK"
-                );
+                await client.query("ROLLBACK");
 
                 return res.status(403).json({
+
                     message:
                         "Please verify your email before creating an event"
+
                 });
+
             }
 
-            // --------------------------------------------------
-            // 17. Check profile completion
-            // --------------------------------------------------
 
             if (!employee.profile_completed) {
 
-                await client.query(
-                    "ROLLBACK"
-                );
+                await client.query("ROLLBACK");
 
                 return res.status(403).json({
+
                     message:
                         "Please complete your profile before creating an event"
+
                 });
+
             }
 
-            // --------------------------------------------------
-            // 18. Upload location photo to MinIO
-            // --------------------------------------------------
+
+            // ==========================================
+            // 6. VALIDATE EMPLOYEE DETAILS
+            // ==========================================
+
+            if (
+                !employee.fullname ||
+                !employee.phonenumber ||
+                !employee.email ||
+                !employee.address
+            ) {
+
+                await client.query("ROLLBACK");
+
+                return res.status(400).json({
+
+                    message:
+                        "Registered user profile details are incomplete"
+
+                });
+
+            }
+
+
+            // ==========================================
+            // 7. UPLOAD LOCATION PHOTO TO MINIO
+            // ==========================================
 
             const locationPhotoPath =
-                await minioClient(
+                await uploadToMinio(
                     locationPhoto,
                     "events/location-photos"
                 );
 
-            if (!locationPhotoPath) {
 
-                await client.query(
-                    "ROLLBACK"
-                );
+            // ==========================================
+            // 8. PARSE CULTURAL EVENTS
+            // ==========================================
 
-                return res.status(500).json({
+            let culturalEvents;
+
+
+            try {
+
+                if (
+                    typeof cultural_events_with_yatra ===
+                    "string"
+                ) {
+
+                    culturalEvents =
+                        JSON.parse(
+                            cultural_events_with_yatra
+                        );
+
+                } else {
+
+                    culturalEvents =
+                        cultural_events_with_yatra;
+
+                }
+
+            } catch (error) {
+
+                await client.query("ROLLBACK");
+
+                return res.status(400).json({
+
                     message:
-                        "Failed to upload location photo"
+                        "cultural_events_with_yatra must be valid JSON"
+
                 });
+
             }
 
-            // --------------------------------------------------
-            // 19. Create event
-            // --------------------------------------------------
+
+            // ==========================================
+            // 9. INSERT EVENT
+            // ==========================================
 
             const eventResult =
                 await client.query(
+
                     `
                     INSERT INTO events (
 
@@ -563,69 +401,57 @@ router.post(
 
                         latitude,
                         longitude,
+
+                        aadhaar_image_path,
+                        voter_card_image_path,
+                        driving_license_image_path,
+
                         location_photo_path,
 
                         status
 
                     )
+
                     VALUES (
 
                         $1,
 
-                        $2,
-                        $3,
-                        $4,
-                        $5,
-                        $6,
+                        $2, $3, $4, $5, $6,
 
-                        $7,
-                        $8,
-                        $9,
+                        $7, $8, $9,
 
-                        $10,
-                        $11,
-                        $12,
+                        $10, $11, $12,
 
-                        $13,
-                        $14,
-                        $15,
-                        $16,
-                        $17,
-                        $18,
+                        $13, $14, $15, $16, $17, $18,
 
-                        $19,
-                        $20,
-                        $21,
+                        $19, $20, $21,
 
-                        $22,
-                        $23,
+                        $22, $23,
 
-                        $24,
-                        $25,
+                        $24, $25,
 
-                        $26,
-                        $27,
-                        $28,
-                        $29,
+                        $26, $27, $28, $29,
 
-                        $30,
-                        $31,
+                        $30, $31,
 
-                        $32,
-                        $33,
+                        $32, $33,
 
-                        $34,
-                        $35,
+                        $34, $35,
 
-                        $36,
+                        $36::jsonb,
                         $37,
                         $38,
 
                         $39,
                         $40,
-                        $41,
 
-                        $42
+                        $41,
+                        $42,
+                        $43,
+
+                        $44,
+
+                        'PENDING'
 
                     )
 
@@ -634,42 +460,38 @@ router.post(
                         empid,
                         committee_name,
                         leader_name,
+                        mobile_number,
                         email,
-                        mandapam_name,
-                        district,
+                        status,
                         latitude,
                         longitude,
                         location_photo_path,
-                        status,
                         created_at
                     `,
+
                     [
 
-                        // $1
-                        employee.id,
+                        // EMPLOYEE
+                        empid,
 
-                        // Committee
-                        // $2 - $6
+                        // COMMITTEE
                         committee_name.trim(),
                         committee_registration_number.trim(),
                         committee_address.trim(),
                         committee_village_town.trim(),
                         committee_mandal.trim(),
 
-                        // Employee-derived
-                        // $7 - $9
+                        // REGISTERED USER DETAILS
                         employee.fullname,
                         employee.phonenumber,
                         employee.email,
 
-                        // ID proof
-                        // $10 - $12
+                        // ID PROOF
                         id_proof_type.trim(),
                         id_proof_number.trim(),
                         employee.address,
 
-                        // Mandapam
-                        // $13 - $18
+                        // MANDAPAM
                         mandapam_name.trim(),
                         landmark.trim(),
                         mandapam_address.trim(),
@@ -677,355 +499,311 @@ router.post(
                         mandapam_mandal.trim(),
                         district.trim(),
 
-                        // Dates
-                        // $19 - $21
+                        // DATES
                         installation_date,
                         festival_start_date,
                         festival_end_date,
 
-                        // Times
-                        // $22 - $23
+                        // DAILY TIME
                         daily_start_time,
                         daily_end_time,
 
-                        // Numbers
-                        // $24 - $25
-                        expectedVisitorsValue,
-                        idolHeightValue,
+                        // VISITORS / IDOL
+                        Number(expected_visitors),
+                        Number(idol_height_ft),
 
-                        // Boolean
-                        // $26 - $29
-                        soundSystemRequired,
-                        electricalConnectionRequired,
-                        generatorRequired,
-                        processionRequired,
+                        // REQUIREMENTS
+                        sound_system_required === "true" ||
+                        sound_system_required === true,
 
-                        // Other mandapam
-                        // $30 - $31
+                        electrical_connection_required === "true" ||
+                        electrical_connection_required === true,
+
+                        generator_required === "true" ||
+                        generator_required === true,
+
+                        procession_required === "true" ||
+                        procession_required === true,
+
+                        // MANDAPAM DETAILS
                         place_of_mandapam.trim(),
                         special_event_details.trim(),
 
-                        // Nimarjanam
-                        // $32 - $33
+                        // NIMARJANAM
                         nimarjanam_date,
                         nimarjanam_location.trim(),
 
-                        // Yatra
-                        // $34 - $35
+                        // YATRA
                         shobha_yatra_start_time,
                         shobha_yatra_end_time,
 
-                        // Cultural events
-                        // $36 - $38
-                        JSON.stringify(
-                            culturalEvents
-                        ),
-                        specify_other_cultural_event.trim(),
-                        additional_nimarjanam_details.trim(),
+                        // CULTURAL EVENTS
+                        JSON.stringify(culturalEvents),
+
+                        specify_other_cultural_event
+                            ? specify_other_cultural_event.trim()
+                            : null,
+
+                        additional_nimarjanam_details
+                            ? additional_nimarjanam_details.trim()
+                            : null,
 
                         // GPS
-                        // $39 - $40
-                        latitudeValue,
-                        longitudeValue,
+                        Number(latitude),
+                        Number(longitude),
 
-                        // MinIO
-                        // $41
-                        locationPhotoPath,
+                        // USER DOCUMENTS FROM EMPLOYEE TABLE
+                        employee.aadhaar_image_path,
+                        employee.voter_id_image_path,
+                        employee.driving_license_image_path,
 
-                        // Status
-                        // $42
-                        "PENDING"
+                        // LOCATION IMAGE
+                        locationPhotoPath
+
                     ]
+
                 );
+
+
+            // ==========================================
+            // 10. COMMIT
+            // ==========================================
+
+            await client.query("COMMIT");
+
 
             const event =
                 eventResult.rows[0];
 
-            // --------------------------------------------------
-            // 20. Commit transaction
-            // --------------------------------------------------
 
-            await client.query(
-                "COMMIT"
-            );
-
-            // --------------------------------------------------
-            // 21. Return response
-            // --------------------------------------------------
+            // ==========================================
+            // 11. SUCCESS RESPONSE
+            // ==========================================
 
             return res.status(201).json({
 
                 message:
-                    "Event permission request created successfully",
+                    "Event request created successfully",
 
-                data: {
-                    event_id:
-                        event.id,
+                data: event
 
-                    empid:
-                        event.empid,
-
-                    committee_name:
-                        event.committee_name,
-
-                    leader_name:
-                        event.leader_name,
-
-                    email:
-                        event.email,
-
-                    mandapam_name:
-                        event.mandapam_name,
-
-                    district:
-                        event.district,
-
-                    location: {
-                        latitude:
-                            event.latitude,
-
-                        longitude:
-                            event.longitude
-                    },
-
-                    location_photo:
-                        event.location_photo_path,
-
-                    status:
-                        event.status,
-
-                    created_at:
-                        event.created_at
-                }
             });
+
 
         } catch (error) {
 
-            // --------------------------------------------------
-            // Rollback
-            // --------------------------------------------------
-
             try {
+
                 await client.query(
                     "ROLLBACK"
                 );
-            } catch (
-                rollbackError
-            ) {
+
+            } catch (rollbackError) {
+
                 console.error(
                     "Rollback error:",
                     rollbackError
                 );
+
             }
+
 
             console.error(
                 "Create event error:",
                 error
             );
 
-            // --------------------------------------------------
-            // Foreign key violation
-            // --------------------------------------------------
 
             if (
-                error.code === "23503"
+                error.code === "23505"
             ) {
+
                 return res.status(400).json({
+
                     message:
-                        "Invalid employee reference"
+                        "Duplicate event data"
+
                 });
+
             }
 
-            // --------------------------------------------------
-            // Invalid data
-            // --------------------------------------------------
-
-            if (
-                error.code === "22P02"
-            ) {
-                return res.status(400).json({
-                    message:
-                        "Invalid data provided"
-                });
-            }
 
             return res.status(500).json({
+
                 message:
                     "Internal server error"
+
             });
 
         } finally {
 
             client.release();
+
         }
+
     }
 );
+
 router.get("/getEvent", async (req, res) => {
-
-    const {
-        userId,
-        date,
-        status
-    } = req.query;
-
     try {
+        const { userId, date, status, id } = req.query;
 
         // ==================================================
-        // 1. SPECIFIC USER
-        //    Full event + employee + documents
+        // 1. GET SPECIFIC EVENT BY EVENT ID
+        // ==================================================
+
+        if (id) {
+
+            const eventResult = await pool.query(
+                `
+                SELECT
+                    e.*,
+
+                    emp.fullname,
+                    emp.gender,
+                    emp.date_of_birth,
+
+                    emp.email AS employee_email,
+                    emp.phonenumber AS employee_phonenumber,
+                    emp.address AS employee_address,
+
+                    emp.profile_pic_path,
+                    emp.aadhaar_image_path,
+                    emp.voter_id_image_path,
+                    emp.driving_license_image_path,
+
+                    emp.profile_completed,
+                    emp.profile_verified
+
+                FROM events e
+
+                INNER JOIN employees emp
+                    ON emp.id = e.empid
+
+                WHERE e.id = $1
+
+                LIMIT 1
+                `,
+                [id]
+            );
+
+            if (eventResult.rows.length === 0) {
+                return res.status(404).json({
+                    message: "Event not found"
+                });
+            }
+
+            const event = eventResult.rows[0];
+
+            // ==============================================
+            // Generate MinIO URLs
+            // ==============================================
+
+            const profilePicUrl =
+                event.profile_pic_path
+                    ? await getMinioUrl(event.profile_pic_path)
+                    : null;
+
+            const aadhaarUrl =
+                event.aadhaar_image_path
+                    ? await getMinioUrl(event.aadhaar_image_path)
+                    : null;
+
+            const voterIdUrl =
+                event.voter_id_image_path
+                    ? await getMinioUrl(event.voter_id_image_path)
+                    : null;
+
+            const drivingLicenseUrl =
+                event.driving_license_image_path
+                    ? await getMinioUrl(
+                        event.driving_license_image_path
+                    )
+                    : null;
+
+            const locationPhotoUrl =
+                event.location_photo_path
+                    ? await getMinioUrl(
+                        event.location_photo_path
+                    )
+                    : null;
+
+            return res.status(200).json({
+                message: "Event fetched successfully",
+
+                data: formatFullEvent(
+                    event,
+                    {
+                        profilePicUrl,
+                        aadhaarUrl,
+                        voterIdUrl,
+                        drivingLicenseUrl,
+                        locationPhotoUrl
+                    }
+                )
+            });
+        }
+
+        // ==================================================
+        // 2. GET FULL EVENT DETAILS BY USER ID
         // ==================================================
 
         if (userId) {
 
+            const values = [userId];
             const conditions = [
-                "e.empid = $1"
+                `e.empid = $1`
             ];
 
-            const values = [
-                userId
-            ];
-
-            let parameterIndex = 2;
-
-            // --------------------------------------------------
-            // Date filter
-            // --------------------------------------------------
+            // Optional date filter
 
             if (date) {
 
-                conditions.push(
-                    `DATE(e.created_at) = $${parameterIndex}`
-                );
-
                 values.push(date);
 
-                parameterIndex++;
+                conditions.push(
+                    `DATE(e.created_at) = $${values.length}`
+                );
             }
 
-            // --------------------------------------------------
-            // Status filter
-            // --------------------------------------------------
+            // Optional status filter
 
             if (status) {
 
-                conditions.push(
-                    `e.status = $${parameterIndex}`
+                values.push(
+                    status.trim().toUpperCase()
                 );
 
-                values.push(status);
-
-                parameterIndex++;
+                conditions.push(
+                    `e.status = $${values.length}`
+                );
             }
 
-            const result = await pool.query(
+            const eventResult = await pool.query(
                 `
                 SELECT
+                    e.*,
 
-                    -- ==========================================
-                    -- EVENT DETAILS
-                    -- ==========================================
+                    emp.fullname,
+                    emp.gender,
+                    emp.date_of_birth,
 
-                    e.id AS event_id,
-                    e.empid,
+                    emp.email AS employee_email,
+                    emp.phonenumber AS employee_phonenumber,
+                    emp.address AS employee_address,
 
-                    e.committee_name,
-                    e.committee_registration_number,
-                    e.committee_address,
-                    e.committee_village_town,
-                    e.committee_mandal,
+                    emp.profile_pic_path,
+                    emp.aadhaar_image_path,
+                    emp.voter_id_image_path,
+                    emp.driving_license_image_path,
 
-                    e.leader_name,
-                    e.mobile_number,
-                    e.email,
-
-                    e.id_proof_type,
-                    e.id_proof_number,
-                    e.residential_address,
-
-                    -- ==========================================
-                    -- MANDAPAM DETAILS
-                    -- ==========================================
-
-                    e.mandapam_name,
-                    e.landmark,
-                    e.mandapam_address,
-                    e.mandapam_village_town,
-                    e.mandapam_mandal,
-                    e.district,
-
-                    e.installation_date,
-                    e.festival_start_date,
-                    e.festival_end_date,
-
-                    e.daily_start_time,
-                    e.daily_end_time,
-
-                    e.expected_visitors,
-                    e.idol_height_ft,
-
-                    e.sound_system_required,
-                    e.electrical_connection_required,
-                    e.generator_required,
-                    e.procession_required,
-
-                    e.place_of_mandapam,
-                    e.special_event_details,
-
-                    -- ==========================================
-                    -- NIMARJANAM DETAILS
-                    -- ==========================================
-
-                    e.nimarjanam_date,
-                    e.nimarjanam_location,
-
-                    e.shobha_yatra_start_time,
-                    e.shobha_yatra_end_time,
-
-                    e.cultural_events_with_yatra,
-                    e.specify_other_cultural_event,
-                    e.additional_nimarjanam_details,
-
-                    -- ==========================================
-                    -- LOCATION
-                    -- ==========================================
-
-                    e.latitude,
-                    e.longitude,
-                    e.location_photo_path,
-
-                    -- ==========================================
-                    -- SYSTEM
-                    -- ==========================================
-
-                    e.police_station_id,
-                    e.status,
-                    e.created_at,
-                    e.updated_at,
-
-                    -- ==========================================
-                    -- EMPLOYEE DETAILS
-                    -- ==========================================
-
-                    u.id AS user_id,
-                    u.fullname AS user_fullname,
-                    u.gender AS user_gender,
-                    u.date_of_birth AS user_date_of_birth,
-                    u.email AS user_email,
-                    u.phonenumber AS user_phonenumber,
-                    u.address AS user_address,
-
-                    u.profile_pic_path,
-                    u.aadhaar_image_path,
-                    u.voter_id_image_path,
-                    u.driving_license_image_path,
-
-                    u.profile_completed,
-                    u.profile_verified
+                    emp.profile_completed,
+                    emp.profile_verified
 
                 FROM events e
 
-                INNER JOIN employees u
-                    ON e.empid = u.id
+                INNER JOIN employees emp
+                    ON emp.id = e.empid
 
                 WHERE ${conditions.join(" AND ")}
 
@@ -1034,443 +812,105 @@ router.get("/getEvent", async (req, res) => {
                 values
             );
 
-            // --------------------------------------------------
-            // No requests
-            // --------------------------------------------------
+            // ==============================================
+            // Generate full data for every event
+            // ==============================================
 
-            if (result.rows.length === 0) {
-
-                return res.status(404).json({
-                    message:
-                        "No event requests found"
-                });
-            }
-
-            // --------------------------------------------------
-            // MinIO bucket
-            // --------------------------------------------------
-
-            const bucketName =
-                process.env.MINIO_BUCKET || "events";
-
-            // --------------------------------------------------
-            // Generate URLs
-            // --------------------------------------------------
-
-            const events =
+            const fullEvents =
                 await Promise.all(
-                    result.rows.map(
+
+                    eventResult.rows.map(
                         async (event) => {
 
-                            let profilePicUrl = null;
-                            let aadhaarUrl = null;
-                            let voterIdUrl = null;
-                            let drivingLicenseUrl = null;
-                            let locationPhotoUrl = null;
-
-                            // ==================================
-                            // PROFILE PICTURE
-                            // ==================================
-
-                            if (
+                            const profilePicUrl =
                                 event.profile_pic_path
-                            ) {
+                                    ? await getMinioUrl(
+                                        event.profile_pic_path
+                                    )
+                                    : null;
 
-                                try {
-
-                                    profilePicUrl =
-                                        await minioClient.presignedGetObject(
-                                            bucketName,
-                                            event.profile_pic_path,
-                                            60 * 60
-                                        );
-
-                                } catch (error) {
-
-                                    console.error(
-                                        "Profile picture URL error:",
-                                        error
-                                    );
-                                }
-                            }
-
-                            // ==================================
-                            // AADHAAR
-                            // ==================================
-
-                            if (
+                            const aadhaarUrl =
                                 event.aadhaar_image_path
-                            ) {
+                                    ? await getMinioUrl(
+                                        event.aadhaar_image_path
+                                    )
+                                    : null;
 
-                                try {
-
-                                    aadhaarUrl =
-                                        await minioClient.presignedGetObject(
-                                            bucketName,
-                                            event.aadhaar_image_path,
-                                            60 * 60
-                                        );
-
-                                } catch (error) {
-
-                                    console.error(
-                                        "Aadhaar URL error:",
-                                        error
-                                    );
-                                }
-                            }
-
-                            // ==================================
-                            // VOTER ID
-                            // ==================================
-
-                            if (
+                            const voterIdUrl =
                                 event.voter_id_image_path
-                            ) {
+                                    ? await getMinioUrl(
+                                        event.voter_id_image_path
+                                    )
+                                    : null;
 
-                                try {
-
-                                    voterIdUrl =
-                                        await minioClient.presignedGetObject(
-                                            bucketName,
-                                            event.voter_id_image_path,
-                                            60 * 60
-                                        );
-
-                                } catch (error) {
-
-                                    console.error(
-                                        "Voter ID URL error:",
-                                        error
-                                    );
-                                }
-                            }
-
-                            // ==================================
-                            // DRIVING LICENCE
-                            // ==================================
-
-                            if (
+                            const drivingLicenseUrl =
                                 event.driving_license_image_path
-                            ) {
+                                    ? await getMinioUrl(
+                                        event.driving_license_image_path
+                                    )
+                                    : null;
 
-                                try {
-
-                                    drivingLicenseUrl =
-                                        await minioClient.presignedGetObject(
-                                            bucketName,
-                                            event.driving_license_image_path,
-                                            60 * 60
-                                        );
-
-                                } catch (error) {
-
-                                    console.error(
-                                        "Driving Licence URL error:",
-                                        error
-                                    );
-                                }
-                            }
-
-                            // ==================================
-                            // LOCATION PHOTO
-                            // ==================================
-
-                            if (
+                            const locationPhotoUrl =
                                 event.location_photo_path
-                            ) {
+                                    ? await getMinioUrl(
+                                        event.location_photo_path
+                                    )
+                                    : null;
 
-                                try {
-
-                                    locationPhotoUrl =
-                                        await minioClient.presignedGetObject(
-                                            bucketName,
-                                            event.location_photo_path,
-                                            60 * 60
-                                        );
-
-                                } catch (error) {
-
-                                    console.error(
-                                        "Location photo URL error:",
-                                        error
-                                    );
+                            return formatFullEvent(
+                                event,
+                                {
+                                    profilePicUrl,
+                                    aadhaarUrl,
+                                    voterIdUrl,
+                                    drivingLicenseUrl,
+                                    locationPhotoUrl
                                 }
-                            }
-
-                            // ==================================
-                            // COMPLETE RESPONSE
-                            // ==================================
-
-                            return {
-
-                                // ==================================
-                                // EVENT
-                                // ==================================
-
-                                event: {
-
-                                    id:
-                                        event.event_id,
-
-                                    empid:
-                                        event.empid,
-
-                                    committee: {
-
-                                        name:
-                                            event.committee_name,
-
-                                        registration_number:
-                                            event.committee_registration_number,
-
-                                        address:
-                                            event.committee_address,
-
-                                        village_town:
-                                            event.committee_village_town,
-
-                                        mandal:
-                                            event.committee_mandal
-                                    },
-
-                                    applicant: {
-
-                                        leader_name:
-                                            event.leader_name,
-
-                                        mobile_number:
-                                            event.mobile_number,
-
-                                        email:
-                                            event.email,
-
-                                        id_proof_type:
-                                            event.id_proof_type,
-
-                                        id_proof_number:
-                                            event.id_proof_number,
-
-                                        residential_address:
-                                            event.residential_address
-                                    },
-
-                                    mandapam: {
-
-                                        name:
-                                            event.mandapam_name,
-
-                                        landmark:
-                                            event.landmark,
-
-                                        address:
-                                            event.mandapam_address,
-
-                                        village_town:
-                                            event.mandapam_village_town,
-
-                                        mandal:
-                                            event.mandapam_mandal,
-
-                                        district:
-                                            event.district,
-
-                                        installation_date:
-                                            event.installation_date,
-
-                                        festival_start_date:
-                                            event.festival_start_date,
-
-                                        festival_end_date:
-                                            event.festival_end_date,
-
-                                        daily_start_time:
-                                            event.daily_start_time,
-
-                                        daily_end_time:
-                                            event.daily_end_time,
-
-                                        expected_visitors:
-                                            event.expected_visitors,
-
-                                        idol_height_ft:
-                                            event.idol_height_ft,
-
-                                        sound_system_required:
-                                            event.sound_system_required,
-
-                                        electrical_connection_required:
-                                            event.electrical_connection_required,
-
-                                        generator_required:
-                                            event.generator_required,
-
-                                        procession_required:
-                                            event.procession_required,
-
-                                        place:
-                                            event.place_of_mandapam,
-
-                                        special_event_details:
-                                            event.special_event_details
-                                    },
-
-                                    nimarjanam: {
-
-                                        date:
-                                            event.nimarjanam_date,
-
-                                        location:
-                                            event.nimarjanam_location,
-
-                                        shobha_yatra_start_time:
-                                            event.shobha_yatra_start_time,
-
-                                        shobha_yatra_end_time:
-                                            event.shobha_yatra_end_time,
-
-                                        cultural_events:
-                                            event.cultural_events_with_yatra,
-
-                                        other_cultural_event:
-                                            event.specify_other_cultural_event,
-
-                                        additional_details:
-                                            event.additional_nimarjanam_details
-                                    },
-
-                                    location: {
-
-                                        latitude:
-                                            event.latitude,
-
-                                        longitude:
-                                            event.longitude,
-
-                                        photo:
-                                            locationPhotoUrl
-                                    },
-
-                                    police_station_id:
-                                        event.police_station_id,
-
-                                    status:
-                                        event.status,
-
-                                    created_at:
-                                        event.created_at,
-
-                                    updated_at:
-                                        event.updated_at
-                                },
-
-                                // ==================================
-                                // REGISTERED USER
-                                // ==================================
-
-                                user: {
-
-                                    id:
-                                        event.user_id,
-
-                                    fullname:
-                                        event.user_fullname,
-
-                                    gender:
-                                        event.user_gender,
-
-                                    date_of_birth:
-                                        event.user_date_of_birth,
-
-                                    email:
-                                        event.user_email,
-
-                                    phonenumber:
-                                        event.user_phonenumber,
-
-                                    address:
-                                        event.user_address,
-
-                                    profile_pic:
-                                        profilePicUrl,
-
-                                    documents: {
-
-                                        aadhaar:
-                                            aadhaarUrl,
-
-                                        voter_id:
-                                            voterIdUrl,
-
-                                        driving_license:
-                                            drivingLicenseUrl
-                                    },
-
-                                    profile_completed:
-                                        event.profile_completed,
-
-                                    profile_verified:
-                                        event.profile_verified
-                                }
-                            };
+                            );
                         }
                     )
                 );
 
             return res.status(200).json({
-
                 message:
-                    "Event requests fetched successfully",
+                    "User event requests fetched successfully",
 
                 count:
-                    events.length,
+                    fullEvents.length,
 
                 data:
-                    events
+                    fullEvents
             });
         }
 
         // ==================================================
-        // 2. ALL EVENTS
-        //    Lightweight response
+        // 3. GET ALL EVENTS - BRIEF DATA
         // ==================================================
 
-        const conditions = [];
         const values = [];
-
-        let parameterIndex = 1;
-
-        // --------------------------------------------------
-        // Date filter
-        // --------------------------------------------------
+        const conditions = [];
 
         if (date) {
 
-            conditions.push(
-                `DATE(e.created_at) = $${parameterIndex}`
-            );
-
             values.push(date);
 
-            parameterIndex++;
+            conditions.push(
+                `DATE(e.created_at) = $${values.length}`
+            );
         }
-
-        // --------------------------------------------------
-        // Status filter
-        // --------------------------------------------------
 
         if (status) {
 
-            conditions.push(
-                `e.status = $${parameterIndex}`
+            values.push(
+                status.trim().toUpperCase()
             );
 
-            values.push(status);
-
-            parameterIndex++;
+            conditions.push(
+                `e.status = $${values.length}`
+            );
         }
 
-        const whereClause =
+        const whereQuery =
             conditions.length > 0
                 ? `WHERE ${conditions.join(" AND ")}`
                 : "";
@@ -1478,154 +918,55 @@ router.get("/getEvent", async (req, res) => {
         const result = await pool.query(
             `
             SELECT
-
-                e.id AS event_id,
+                e.id,
                 e.empid,
 
                 e.committee_name,
-                e.committee_village_town,
-                e.committee_mandal,
-
-                e.leader_name,
-
                 e.mandapam_name,
-                e.mandapam_village_town,
-                e.mandapam_mandal,
-                e.district,
 
                 e.installation_date,
+
                 e.festival_start_date,
                 e.festival_end_date,
 
                 e.expected_visitors,
+
                 e.idol_height_ft,
 
                 e.place_of_mandapam,
 
-                e.nimarjanam_date,
-                e.nimarjanam_location,
-
-                e.latitude,
-                e.longitude,
-
-                e.police_station_id,
                 e.status,
 
-                e.created_at
+                e.created_at,
+
+                emp.fullname AS leader_name,
+
+                emp.phonenumber AS mobile_number,
+
+                emp.email
 
             FROM events e
 
-            ${whereClause}
+            INNER JOIN employees emp
+                ON emp.id = e.empid
 
-            ORDER BY e.created_at DESC
+            ${whereQuery}
+
+            ORDER BY
+                e.created_at DESC
             `,
             values
         );
 
-        // --------------------------------------------------
-        // No events
-        // --------------------------------------------------
-
-        if (result.rows.length === 0) {
-
-            return res.status(404).json({
-                message:
-                    "No event requests found"
-            });
-        }
-
-        // --------------------------------------------------
-        // Lightweight response
-        // --------------------------------------------------
-
-        const events =
-            result.rows.map(
-                (event) => ({
-
-                    event_id:
-                        event.event_id,
-
-                    empid:
-                        event.empid,
-
-                    committee_name:
-                        event.committee_name,
-
-                    village_town:
-                        event.committee_village_town,
-
-                    mandal:
-                        event.committee_mandal,
-
-                    leader_name:
-                        event.leader_name,
-
-                    mandapam_name:
-                        event.mandapam_name,
-
-                    mandapam_village_town:
-                        event.mandapam_village_town,
-
-                    mandapam_mandal:
-                        event.mandapam_mandal,
-
-                    district:
-                        event.district,
-
-                    installation_date:
-                        event.installation_date,
-
-                    festival_start_date:
-                        event.festival_start_date,
-
-                    festival_end_date:
-                        event.festival_end_date,
-
-                    expected_visitors:
-                        event.expected_visitors,
-
-                    idol_height_ft:
-                        event.idol_height_ft,
-
-                    place_of_mandapam:
-                        event.place_of_mandapam,
-
-                    nimarjanam_date:
-                        event.nimarjanam_date,
-
-                    nimarjanam_location:
-                        event.nimarjanam_location,
-
-                    location: {
-
-                        latitude:
-                            event.latitude,
-
-                        longitude:
-                            event.longitude
-                    },
-
-                    police_station_id:
-                        event.police_station_id,
-
-                    status:
-                        event.status,
-
-                    created_at:
-                        event.created_at
-                })
-            );
-
         return res.status(200).json({
-
             message:
                 "Event requests fetched successfully",
 
             count:
-                events.length,
+                result.rows.length,
 
             data:
-                events
+                result.rows
         });
 
     } catch (error) {
@@ -1641,6 +982,273 @@ router.get("/getEvent", async (req, res) => {
         });
     }
 });
+
+
+// ======================================================
+// HELPER FUNCTION
+// ======================================================
+
+function formatFullEvent(event, urls) {
+
+    return {
+
+        event: {
+
+            id:
+                event.id,
+
+            empid:
+                event.empid,
+
+
+            // ==========================================
+            // COMMITTEE
+            // ==========================================
+
+            committee: {
+
+                name:
+                    event.committee_name,
+
+                registration_number:
+                    event.committee_registration_number,
+
+                address:
+                    event.committee_address,
+
+                village_town:
+                    event.committee_village_town,
+
+                mandal:
+                    event.committee_mandal
+            },
+
+
+            // ==========================================
+            // APPLICANT
+            // ==========================================
+
+            applicant: {
+
+                leader_name:
+                    event.leader_name,
+
+                mobile_number:
+                    event.mobile_number,
+
+                email:
+                    event.email,
+
+                id_proof_type:
+                    event.id_proof_type,
+
+                id_proof_number:
+                    event.id_proof_number,
+
+                residential_address:
+                    event.residential_address
+            },
+
+
+            // ==========================================
+            // MANDAPAM
+            // ==========================================
+
+            mandapam: {
+
+                name:
+                    event.mandapam_name,
+
+                landmark:
+                    event.landmark,
+
+                address:
+                    event.mandapam_address,
+
+                village_town:
+                    event.mandapam_village_town,
+
+                mandal:
+                    event.mandapam_mandal,
+
+                district:
+                    event.district,
+
+                installation_date:
+                    event.installation_date,
+
+                festival_start_date:
+                    event.festival_start_date,
+
+                festival_end_date:
+                    event.festival_end_date,
+
+                daily_start_time:
+                    event.daily_start_time,
+
+                daily_end_time:
+                    event.daily_end_time,
+
+                expected_visitors:
+                    event.expected_visitors,
+
+                idol_height_ft:
+                    event.idol_height_ft,
+
+                sound_system_required:
+                    event.sound_system_required,
+
+                electrical_connection_required:
+                    event.electrical_connection_required,
+
+                generator_required:
+                    event.generator_required,
+
+                procession_required:
+                    event.procession_required,
+
+                place_of_mandapam:
+                    event.place_of_mandapam,
+
+                special_event_details:
+                    event.special_event_details
+            },
+
+
+            // ==========================================
+            // NIMARJANAM
+            // ==========================================
+
+            nimarjanam: {
+
+                date:
+                    event.nimarjanam_date,
+
+                location:
+                    event.nimarjanam_location,
+
+                shobha_yatra_start_time:
+                    event.shobha_yatra_start_time,
+
+                shobha_yatra_end_time:
+                    event.shobha_yatra_end_time,
+
+                cultural_events:
+                    event.cultural_events_with_yatra,
+
+                other_cultural_event:
+                    event.specify_other_cultural_event,
+
+                additional_details:
+                    event.additional_nimarjanam_details
+            },
+
+
+            // ==========================================
+            // LOCATION
+            // ==========================================
+
+            location: {
+
+                latitude:
+                    event.latitude,
+
+                longitude:
+                    event.longitude,
+
+                photo:
+                    urls.locationPhotoUrl
+            },
+
+
+            // ==========================================
+            // POLICE ACTION
+            // ==========================================
+
+            police_station_id:
+                event.police_station_id,
+
+            status:
+                event.status,
+
+            police_remarks:
+                event.police_remarks,
+
+            action_by:
+                event.action_by,
+
+            action_at:
+                event.action_at,
+
+            created_at:
+                event.created_at,
+
+            updated_at:
+                event.updated_at
+        },
+
+
+        // ==============================================
+        // REGISTERED USER
+        // ==============================================
+
+        user: {
+
+            id:
+                event.empid,
+
+            fullname:
+                event.fullname,
+
+            gender:
+                event.gender,
+
+            date_of_birth:
+                event.date_of_birth,
+
+            email:
+                event.employee_email,
+
+            phonenumber:
+                event.employee_phonenumber,
+
+            address:
+                event.employee_address,
+
+
+            // ==========================================
+            // PROFILE IMAGE
+            // ==========================================
+
+            profile_pic:
+                urls.profilePicUrl,
+
+
+            // ==========================================
+            // DOCUMENT IMAGES
+            // ==========================================
+
+            documents: {
+
+                aadhaar:
+                    urls.aadhaarUrl,
+
+                voter_id:
+                    urls.voterIdUrl,
+
+                driving_license:
+                    urls.drivingLicenseUrl
+            },
+
+
+            profile_completed:
+                event.profile_completed,
+
+            profile_verified:
+                event.profile_verified
+        }
+    };
+}
 router.put(
     "/actionRequest",
   
@@ -1656,7 +1264,7 @@ router.put(
         // 1. Get authenticated user
         // --------------------------------------------------
 
-        const actionBy = req.user?.id;
+        const actionBy = 2;
 
         if (!actionBy) {
             return res.status(401).json({

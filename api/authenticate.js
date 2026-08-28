@@ -1,30 +1,44 @@
 const express=require("express")
 const multer=require("multer")
 const router=express.Router()
-const {minioClient,connectMinio}=require("../DB/minio")
+const bcrypt=require("bcrypt")
+const {minioClient,connectMinio,uploadToMinio}=require("../DB/minio")
 const {connectDB,pool}=require("../DB/psql")
-const upload = multer({
-    storage: multer.memoryStorage()
-});
+const {redis,connectRedis}=require("../DB/redis")
 async function CreateSendOTP(email) {
     const otp=Math.floor(100000 + Math.random() * 900000)
     console.log("otp=",otp)
         await redis.set(`otp:${email}`, otp, "EX", 300)
-          await sendEmail(email, "OTP Verification", `Your OTP is ${otp} expires in 5 minutes`);
+        //   await sendEmail(email, "OTP Verification", `Your OTP is ${otp} expires in 5 minutes`);
           return true
 }
-router.post(
-    "/createEmployee",
-    
 
-    upload.fields([
+// Your existing functions/middleware
+
+// const { sendEmail } = require("../utils/sendEmail");
+// const redis = require("../DB/redis");
+
+// --------------------------------------------------
+// Multer configuration
+// --------------------------------------------------
+
+const upload = multer({
+    storage: multer.memoryStorage()
+});
+
+// --------------------------------------------------
+// Create Employee / User
+// --------------------------------------------------
+router.post( "/createEmployee",upload.fields([
         { name: "aadhaar", maxCount: 1 },
         { name: "profile_pic", maxCount: 1 },
         { name: "voter_id", maxCount: 1 },
         { name: "driving_license", maxCount: 1 }
-    ]),
+    ]),async (req, res) => {
 
-    async (req, res) => {
+        // --------------------------------------------------
+        // 1. Get body fields
+        // --------------------------------------------------
 
         const {
             fullname,
@@ -37,29 +51,13 @@ router.post(
         } = req.body;
 
         // --------------------------------------------------
-        // 1. Validate required fields
-        // --------------------------------------------------
-
-        if (
-            !fullname ||
-            !email ||
-            !phonenumber ||
-            !password
-        ) {
-            return res.status(400).json({
-                message:
-                    "fullname, email, phonenumber and password are required"
-            });
-        }
-
-        // --------------------------------------------------
         // 2. Get uploaded files
         // --------------------------------------------------
 
         const aadhaarFile =
             req.files?.aadhaar?.[0];
 
-        const profilePic =
+        const profilePicFile =
             req.files?.profile_pic?.[0];
 
         const voterIdFile =
@@ -69,12 +67,31 @@ router.post(
             req.files?.driving_license?.[0];
 
         // --------------------------------------------------
-        // 3. Validate required documents
+        // 3. Validate required fields
+        // --------------------------------------------------
+
+        if (
+            !fullname ||
+            !email ||
+            !phonenumber ||
+            !address ||
+            !date_of_birth ||
+            !gender ||
+            !password
+        ) {
+            return res.status(400).json({
+                message:
+                    "fullname, gender, date_of_birth, email, phonenumber, address and password are required"
+            });
+        }
+
+        // --------------------------------------------------
+        // 4. Validate documents
         // --------------------------------------------------
 
         if (
             !aadhaarFile ||
-            !profilePic ||
+            !profilePicFile ||
             !voterIdFile ||
             !drivingLicenseFile
         ) {
@@ -84,15 +101,20 @@ router.post(
             });
         }
 
-        const client =
-            await pool.connect();
+        const client = await pool.connect();
 
         try {
 
             await client.query("BEGIN");
 
+            const cleanEmail =
+                email.trim().toLowerCase();
+
+            const cleanPhone =
+                phonenumber.trim();
+
             // --------------------------------------------------
-            // 4. Check email
+            // 5. Check existing email
             // --------------------------------------------------
 
             const existingEmail =
@@ -100,19 +122,16 @@ router.post(
                     `
                     SELECT id
                     FROM employees
-                    WHERE LOWER(email) = LOWER($1)
+                    WHERE LOWER(email) = $1
                     LIMIT 1
                     `,
-                    [email.trim()]
+                    [cleanEmail]
                 );
 
             if (
                 existingEmail.rows.length > 0
             ) {
-
-                await client.query(
-                    "ROLLBACK"
-                );
+                await client.query("ROLLBACK");
 
                 return res.status(400).json({
                     message:
@@ -121,7 +140,7 @@ router.post(
             }
 
             // --------------------------------------------------
-            // 5. Check phone number
+            // 6. Check existing phone number
             // --------------------------------------------------
 
             const existingPhone =
@@ -132,16 +151,13 @@ router.post(
                     WHERE phonenumber = $1
                     LIMIT 1
                     `,
-                    [phonenumber.trim()]
+                    [cleanPhone]
                 );
 
             if (
                 existingPhone.rows.length > 0
             ) {
-
-                await client.query(
-                    "ROLLBACK"
-                );
+                await client.query("ROLLBACK");
 
                 return res.status(400).json({
                     message:
@@ -150,66 +166,60 @@ router.post(
             }
 
             // --------------------------------------------------
-            // 6. Hash password
+            // 7. Hash password
             // --------------------------------------------------
 
             const encryptedPassword =
-                await bcrypt.hash(
-                    password,
-                    10
+                await bcrypt.hash(password, 10);
+
+            // --------------------------------------------------
+            // 8. Ensure MinIO connection
+            // --------------------------------------------------
+
+            await connectMinio();
+
+            // --------------------------------------------------
+            // 9. Upload Aadhaar
+            // --------------------------------------------------
+
+            const aadhaarImagePath =
+                await uploadToMinio(
+                    aadhaarFile,
+                    "employees/aadhaar"
                 );
 
             // --------------------------------------------------
-            // 7. Upload files to MinIO
+            // 10. Upload profile picture
             // --------------------------------------------------
 
             const profilePicPath =
-                await minioClient(
-                    profilePic,
-                    "events/profile-pictures"
+                await uploadToMinio(
+                    profilePicFile,
+                    "employees/profile-pictures"
                 );
 
-            const aadhaarImagePath =
-                await minioClient(
-                    aadhaarFile,
-                    "events/aadhaar"
-                );
+            // --------------------------------------------------
+            // 11. Upload Voter ID
+            // --------------------------------------------------
 
             const voterIdImagePath =
-                await minioClient(
+                await uploadToMinio(
                     voterIdFile,
-                    "events/voter-id"
+                    "employees/voter-id"
                 );
+
+            // --------------------------------------------------
+            // 12. Upload Driving Licence
+            // --------------------------------------------------
 
             const drivingLicenseImagePath =
-                await minioClient(
+                await uploadToMinio(
                     drivingLicenseFile,
-                    "events/driving-license"
+                    "employees/driving-license"
                 );
 
             // --------------------------------------------------
-            // 8. Check MinIO uploads
-            // --------------------------------------------------
-
-            if (
-                !profilePicPath ||
-                !aadhaarImagePath ||
-                !voterIdImagePath ||
-                !drivingLicenseImagePath
-            ) {
-
-                await client.query(
-                    "ROLLBACK"
-                );
-
-                return res.status(500).json({
-                    message:
-                        "Failed to upload one or more documents"
-                });
-            }
-
-            // --------------------------------------------------
-            // 9. Create employee/user
+            // 13. Create employee/user
             // --------------------------------------------------
 
             const employeeResult =
@@ -229,23 +239,18 @@ router.post(
                         voter_id_image_path,
                         driving_license_image_path,
 
+                        status,
                         profile_completed,
-                        profile_verified
+                        profile_verified,
+
+                        created_at,
+                        updated_at
                     )
                     VALUES (
-                        $1,
-                        $2,
-                        $3,
-                        $4,
-                        $5,
-                        $6,
-                        $7,
-                        $8,
-                        $9,
-                        $10,
-                        $11,
-                        $12,
-                        $13
+                        $1, $2, $3, $4, $5, $6, $7,
+                        $8, $9, $10, $11,
+                        TRUE, TRUE, FALSE,
+                        NOW(), NOW()
                     )
                     RETURNING
                         id,
@@ -255,43 +260,25 @@ router.post(
                         email,
                         phonenumber,
                         address,
+                        profile_pic_path,
                         profile_completed,
                         profile_verified,
+                        status,
                         created_at
                     `,
                     [
                         fullname.trim(),
-
-                        gender
-                            ? gender.trim()
-                            : null,
-
-                        date_of_birth ||
-                            null,
-
-                        email
-                            .trim()
-                            .toLowerCase(),
-
-                        phonenumber.trim(),
-
-                        address
-                            ? address.trim()
-                            : null,
-
+                        gender.trim(),
+                        date_of_birth,
+                        cleanEmail,
+                        cleanPhone,
+                        address.trim(),
                         encryptedPassword,
 
                         profilePicPath,
-
                         aadhaarImagePath,
-
                         voterIdImagePath,
-
-                        drivingLicenseImagePath,
-
-                        true,
-
-                        false
+                        drivingLicenseImagePath
                     ]
                 );
 
@@ -299,15 +286,13 @@ router.post(
                 employeeResult.rows[0];
 
             // --------------------------------------------------
-            // 10. Commit transaction
+            // 14. Commit transaction
             // --------------------------------------------------
 
-            await client.query(
-                "COMMIT"
-            );
+            await client.query("COMMIT");
 
             // --------------------------------------------------
-            // 11. Send OTP
+            // 15. Send OTP
             // --------------------------------------------------
 
             const mailSend =
@@ -345,7 +330,7 @@ router.post(
             }
 
             // --------------------------------------------------
-            // 12. Success response
+            // 16. Success response
             // --------------------------------------------------
 
             return res.status(201).json({
@@ -354,11 +339,18 @@ router.post(
                     "Account created successfully. OTP sent to email.",
 
                 data: {
+
                     employee_id:
                         employee.id,
 
                     fullname:
                         employee.fullname,
+
+                    gender:
+                        employee.gender,
+
+                    date_of_birth:
+                        employee.date_of_birth,
 
                     email:
                         employee.email,
@@ -366,27 +358,37 @@ router.post(
                     phonenumber:
                         employee.phonenumber,
 
+                    address:
+                        employee.address,
+
                     profile_completed:
                         employee.profile_completed,
 
                     profile_verified:
-                        employee.profile_verified
+                        employee.profile_verified,
+
+                    status:
+                        employee.status,
+
+                    created_at:
+                        employee.created_at
                 }
             });
 
         } catch (error) {
 
             // --------------------------------------------------
-            // Rollback
+            // Rollback transaction
             // --------------------------------------------------
 
             try {
+
                 await client.query(
                     "ROLLBACK"
                 );
-            } catch (
-                rollbackError
-            ) {
+
+            } catch (rollbackError) {
+
                 console.error(
                     "Rollback error:",
                     rollbackError
@@ -394,12 +396,10 @@ router.post(
             }
 
             // --------------------------------------------------
-            // Unique violation
+            // PostgreSQL unique violation
             // --------------------------------------------------
 
-            if (
-                error.code === "23505"
-            ) {
+            if (error.code === "23505") {
 
                 return res.status(400).json({
                     message:
@@ -423,6 +423,8 @@ router.post(
         }
     }
 );
+
+
 router.post("/createPolicestation",  async (req, res) => {
     const {
         name,
@@ -909,7 +911,7 @@ router.put("/verifyuserRegister",  async (req, res) => {
     // --------------------------------------------------
     // 2. Allowed tables
     // --------------------------------------------------
-
+console.log(table)
     const allowedTables = {
         employee: "employees",
         employees: "employees",
